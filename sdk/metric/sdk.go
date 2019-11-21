@@ -377,6 +377,7 @@ func (m *SDK) Collect(ctx context.Context) int {
 	var next *record
 	for inuse := m.records.primary.swapNil(); inuse != nil; inuse = next {
 		next = inuse.next.primary.load()
+		// fmt.Println("NEXT", next)
 
 		refcount := atomic.LoadInt64(&inuse.refcount)
 
@@ -397,6 +398,7 @@ func (m *SDK) Collect(ctx context.Context) int {
 		}
 
 		// Remove this entry.
+		// fmt.Println("DELETING MAP KEY")
 		m.current.Delete(inuse.mapkey())
 		inuse.next.primary.store(hazardRecord)
 	}

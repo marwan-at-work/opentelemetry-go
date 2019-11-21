@@ -123,10 +123,12 @@ func (b *Batcher) Process(_ context.Context, record export.Record) error {
 		export.NewLabels(outputLabels, encoded, b.labelEncoder),
 		agg,
 	)
+	// fmt.Println("PROCESS aggCheckpoint len:", len(b.aggCheckpoint))
 	return nil
 }
 
 func (b *Batcher) CheckpointSet() export.CheckpointSet {
+	// fmt.Println("CHEK!", len(b.aggCheckpoint))
 	return &checkpointSet{
 		aggCheckpointMap: b.aggCheckpoint,
 		labelEncoder:     b.labelEncoder,
@@ -135,11 +137,13 @@ func (b *Batcher) CheckpointSet() export.CheckpointSet {
 
 func (b *Batcher) FinishedCollection() {
 	if !b.stateful {
+		// fmt.Println("RESETING CHECKPOINT MAP")
 		b.aggCheckpoint = aggCheckpointMap{}
 	}
 }
 
 func (p *checkpointSet) ForEach(f func(export.Record)) {
+	// fmt.Println("FOR EACH LEN", len(p.aggCheckpointMap))
 	for _, entry := range p.aggCheckpointMap {
 		f(entry)
 	}

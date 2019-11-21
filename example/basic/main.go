@@ -16,17 +16,29 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io/ioutil"
 	"log"
+	"math/rand"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/signal"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/api/distributedcontext"
 	"go.opentelemetry.io/otel/api/key"
 	"go.opentelemetry.io/otel/api/metric"
 	"go.opentelemetry.io/otel/api/trace"
+	"go.opentelemetry.io/otel/example/marwan/othttp"
+	"go.opentelemetry.io/otel/exporter/metric/datadog"
 	metricstdout "go.opentelemetry.io/otel/exporter/metric/stdout"
 	tracestdout "go.opentelemetry.io/otel/exporter/trace/stdout"
 	"go.opentelemetry.io/otel/global"
+	export "go.opentelemetry.io/otel/sdk/export/metric"
 	metricsdk "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/aggregator/ddsketch"
 	"go.opentelemetry.io/otel/sdk/metric/batcher/defaultkeys"
 	"go.opentelemetry.io/otel/sdk/metric/controller/push"
 	"go.opentelemetry.io/otel/sdk/metric/selector/simple"
@@ -58,22 +70,64 @@ func initTracer() {
 
 func initMeter() *push.Controller {
 	selector := simple.NewWithExactMeasure()
-	exporter, err := metricstdout.New(metricstdout.Options{
+	if false {
+		selector = simple.NewWithSketchMeasure(ddsketch.NewDefaultConfig())
+	}
+	var exporter export.Exporter
+	var err error
+	if false {
+		exporter, err = datadog.New(datadog.Options{
+			Namespace: "otel",
+			Tags:      []string{"environment:staging"},
+		})
+	}
+	exporter, err = metricstdout.New(metricstdout.Options{
 		Quantiles:   []float64{0.5, 0.9, 0.99},
-		PrettyPrint: false,
+		PrettyPrint: true,
 	})
 	if err != nil {
 		log.Panicf("failed to initialize metric stdout exporter %v", err)
 	}
-	batcher := defaultkeys.New(selector, metricsdk.DefaultLabelEncoder(), true)
-	pusher := push.New(batcher, exporter, time.Second)
+	batcher := defaultkeys.New(selector, metricsdk.DefaultLabelEncoder(), false)
+	pusher := push.New(batcher, exporter, 10*time.Second)
 	pusher.Start()
 
 	global.SetMeterProvider(pusher)
 	return pusher
 }
 
+func mainy() {
+	defer initMeter().Stop()
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt, os.Kill)
+	h := othttp.NewHandler(http.HandlerFunc(handler), global.MeterProvider().GetMeter(""))
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	mch := make(chan minmax)
+
+	go setLatency(mch)
+	go produceLatency(mch)
+	url := strings.TrimSuffix(srv.URL, "/") + "/test"
+	runPinger(url, ch)
+	fmt.Println("EXITING")
+}
+
 func main() {
+	defer initMeter().Stop()
+
+	h := othttp.NewHandler(http.HandlerFunc(xhandler), global.MeterProvider().GetMeter(""))
+	http.ListenAndServe(":3030", h)
+}
+
+func xhandler(w http.ResponseWriter, r *http.Request) {
+	dur := time.Duration(rand.Intn(400))
+	fmt.Println("GOT IT", dur)
+	time.Sleep((time.Millisecond * dur) + (100 * time.Millisecond))
+	w.WriteHeader(200)
+}
+
+func mainx() {
 	defer initMeter().Stop()
 	initTracer()
 
@@ -136,6 +190,88 @@ func main() {
 			},
 		)
 	})
+	if err != nil {
+		panic(err)
+	}
+}
+
+func runPinger(url string, done chan os.Signal) {
+Outer:
+	for {
+		resp, err := http.Get(url)
+		if err != nil {
+			panic(err)
+		}
+		_, err = ioutil.ReadAll(resp.Body)
+		if err != nil {
+			panic(err)
+		}
+		resp.Body.Close()
+		select {
+		case <-done:
+			break Outer
+		case <-shouldExit:
+			break Outer
+		default:
+		}
+	}
+}
+
+var durCh = make(chan time.Duration)
+var shouldExit = make(chan struct{})
+
+type simulator struct {
+	dur time.Duration
+	m   minmax
+}
+
+type minmax struct {
+	min, max int
+}
+
+func setLatency(ch chan minmax) {
+	for _, sim := range [...]simulator{
+		{
+			dur: time.Minute * 4,
+			m:   minmax{200, 400},
+		},
+		{
+			dur: time.Minute * 6,
+			m:   minmax{1000, 2000},
+		},
+		{
+			dur: time.Minute * 4,
+			m:   minmax{200, 400},
+		},
+	} {
+		ch <- sim.m
+		time.Sleep(sim.dur)
+	}
+	close(shouldExit)
+}
+
+func produceLatency(ch chan minmax) {
+	m := <-ch
+	for {
+		select {
+		case m = <-ch:
+		case <-shouldExit:
+			return
+		default:
+		}
+		dur := time.Millisecond * time.Duration(m.min+rand.Intn(m.max-m.min))
+		fmt.Println("MIN", m.min, "MAX", m.max, "DUR", dur)
+		durCh <- dur
+	}
+}
+
+func handler(w http.ResponseWriter, r *http.Request) {
+	time.Sleep(<-durCh)
+	w.WriteHeader(200)
+	w.Write([]byte("cool\n"))
+}
+
+func must(err error) {
 	if err != nil {
 		panic(err)
 	}

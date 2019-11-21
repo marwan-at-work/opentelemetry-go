@@ -160,6 +160,9 @@ func (c *Controller) tick() {
 	// TODO: either remove the context argument from Export() or
 	// configure a timeout here?
 	ctx := context.Background()
+	// fmt.Println("CALLING COLLECT")
+	// collected := c.sdk.Collect(ctx)
+	// fmt.Println("COLLECTED:", collected)
 	c.sdk.Collect(ctx)
 	err := c.exporter.Export(ctx, c.batcher.CheckpointSet())
 	c.batcher.FinishedCollection()
