@@ -50,8 +50,7 @@ type Filter func(*http.Request) bool
 // the mux are wrapped with WithRouteTag. A Handler will add various attributes
 // to the span using the core.Keys defined in this package.
 type Handler struct {
-	operation string
-	handler   http.Handler
+	handler http.Handler
 
 	tracer           trace.Tracer
 	props            propagation.Propagators
@@ -59,6 +58,7 @@ type Handler struct {
 	readEvent        bool
 	writeEvent       bool
 	filters          []Filter
+	spanFormatter    func(*http.Request) string
 }
 
 // Option function used for setting *optional* Handler properties
@@ -140,10 +140,22 @@ func WithMessageEvents(events ...event) Option {
 	}
 }
 
+// WithSpanFormatter takes a function that will be called on every
+// incoming request and the returned string will become the Span Name
+func WithSpanFormatter(f func(*http.Request) string) Option {
+	return func(h *Handler) {
+		h.spanFormatter = f
+	}
+}
+
+func defaultFormatter(r *http.Request) string {
+	return r.URL.Path
+}
+
 // NewHandler wraps the passed handler, functioning like middleware, in a span
-// named after the operation and with any provided HandlerOptions.
-func NewHandler(handler http.Handler, operation string, opts ...Option) http.Handler {
-	h := Handler{handler: handler, operation: operation}
+// named after the request path by default and with any provided HandlerOptions.
+func NewHandler(handler http.Handler, opts ...Option) http.Handler {
+	h := Handler{handler: handler, spanFormatter: defaultFormatter}
 	defaultOpts := []Option{
 		WithTracer(global.Tracer("go.opentelemetry.io/plugin/othttp")),
 		WithPropagators(global.Propagators()),
@@ -169,7 +181,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	opts := append([]trace.StartOption{}, h.spanStartOptions...) // start with the configured options
 
 	ctx := propagation.ExtractHTTP(r.Context(), h.props, r.Header)
-	ctx, span := h.tracer.Start(ctx, h.operation, opts...)
+	ctx, span := h.tracer.Start(ctx, h.spanFormatter(r), opts...)
 	defer span.End()
 
 	readRecordFunc := func(int64) {}

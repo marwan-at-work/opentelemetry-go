@@ -34,7 +34,7 @@ func TestBasics(t *testing.T) {
 			if _, err := io.WriteString(w, "hello world"); err != nil {
 				t.Fatal(err)
 			}
-		}), "test_handler",
+		}),
 		WithTracer(&tracer))
 
 	r, err := http.NewRequest(http.MethodGet, "http://localhost/", nil)
@@ -71,7 +71,7 @@ func TestBasicFilter(t *testing.T) {
 			if _, err := io.WriteString(w, "hello world"); err != nil {
 				t.Fatal(err)
 			}
-		}), "test_handler",
+		}),
 		WithTracer(&tracer),
 		WithFilter(func(r *http.Request) bool {
 			return false

@@ -104,8 +104,11 @@ func ExampleNewHandler() {
 	)
 
 	if err := http.ListenAndServe(":7777",
-		othttp.NewHandler(&mux, "server",
+		othttp.NewHandler(&mux,
 			othttp.WithMessageEvents(othttp.ReadEvents, othttp.WriteEvents),
+			othttp.WithSpanFormatter(func(r *http.Request) string {
+				return "server"
+			}),
 		),
 	); err != nil {
 		log.Fatal(err)
