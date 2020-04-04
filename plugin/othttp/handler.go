@@ -142,6 +142,8 @@ func WithMessageEvents(events ...event) Option {
 
 // NewHandler wraps the passed handler, functioning like middleware, in a span
 // named after the operation and with any provided HandlerOptions.
+// If operation is an empty string, then the *http.Request's URL.Path will be
+// the span name
 func NewHandler(handler http.Handler, operation string, opts ...Option) http.Handler {
 	h := Handler{handler: handler, operation: operation}
 	defaultOpts := []Option{
@@ -169,6 +171,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	opts := append([]trace.StartOption{}, h.spanStartOptions...) // start with the configured options
 
 	ctx := propagation.ExtractHTTP(r.Context(), h.props, r.Header)
+	spanName := h.operation
+	if spanName == "" {
+		spanName = r.URL.Path
+	}
 	ctx, span := h.tracer.Start(ctx, h.operation, opts...)
 	defer span.End()
 
